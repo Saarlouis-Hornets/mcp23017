@@ -1,6 +1,5 @@
 import time
 import logging
-from selectors import SelectSelector
 
 
 class I2C:

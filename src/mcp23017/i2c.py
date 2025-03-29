@@ -55,7 +55,7 @@ class I2C:
 
     def read(self, address, register=None):
         r = self.sbus.read_byte_data(
-            address=address, register=register
+            address, register
         ) if register is not None else self.sbus.read_byte(address)
         self.lg.hw_debug(f"reading from {hex(address)} at {hex(register)}: {r:08b}")
         return self.invert(r) if self.invert_io else r

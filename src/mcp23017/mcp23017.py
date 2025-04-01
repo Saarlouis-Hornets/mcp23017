@@ -6,6 +6,8 @@ import time
 from .helper import compose_all_no_subclass, AllConsts
 from .i2c import I2C, h, GenericByteT
 
+from . import logging_modes
+
 
 class MCP23017:
     @compose_all_no_subclass
@@ -43,11 +45,11 @@ class MCP23017:
             GPIO: tuple[int, int] = (0x12, 0x13)
             OLAT: tuple[int, int] = (0x14, 0x15)
 
-            def get_register(self, register, index: Index):
+            def get_register(self, register, index: int):
                 return getattr(self, register)[index]
 
             def get_index(self, register_tuple: tuple[int, int],
-                          register: int) -> Index:
+                          register: int) -> int:
                 if register not in register_tuple:
                     raise KeyError(f"{register=} not in {register_tuple=}")
                 return register_tuple.index(register)
@@ -153,7 +155,7 @@ class MCP23017:
         if configured, we check if the write was sucessfull and retry for
         self.write_retries times.  if still not good, return :IOError:
 
-        :param register: register to write to
+        :param reg: register to write to
         :param value:
         :param check_register: the register to check or True to check the same
             register or False to not check at all (not recommenden)
@@ -230,14 +232,14 @@ class MCP23017:
         """
         # the register to pull to mask
         mask_register = self.Consts.Register.get_register(
-            self.Consts.Register.Mask.GPIO,
+            self.Consts.Register.Mask["GPIO"],
             self.Consts.Register.get_index(self.Consts.Register.GPIO, io_reg),
         )
         self.lg.hw_debug(f"using as mask register for write validation: {h(mask_register)}")
 
         # we dont need to find out what is input and what output as its dynamic const
-        mask = (r := self.read(mask_register)) if self.Consts.bINPUT \
-            else invert(r, self.Consts.Register.bit_size)
+        r = self.read(mask_register)
+        mask = r if self.Consts.bINPUT else invert(r, self.Consts.Register.bit_size)
 
         self.lg.hw_debug(f"the input mask is {h(mask)}")
 
@@ -274,10 +276,8 @@ class MCP23017:
         pair = self.get_register_gpio_tuple(self.Consts.Register.GPIO, gpio)
         bits = self.read(pair[0])
 
-        # FIXME tf am i returning there
-        return self._invert_io(
-            self.Consts.HIGH if (bits & (1 << pair[1])) > 0 else self.Consts.LOW
-        )
+        # FIXME: im not consulting Consts.HIGH
+        return bool(self._invert_io((bits & (1 << pair[1])) > 0, max_v=1))
 
     def digital_read_all(self) -> List[int]:
         """
@@ -389,14 +389,14 @@ class MCP23017:
             for i in reversed(range(8)):
                 int_flags.append(bits[i])
 
-                return int_flags
+            return int_flags
 
         return [
             _read_interrupt_flags(self.read(reg))
             for reg in self.Consts.Register.INTF
         ]
 
-    def _invert_io(self, v: int, size: Optional[int] = None) -> int:
+    def _invert_io(self, v: int, max_v: Optional[int] = None) -> int:
         """
         invert based on bus lenght
 
@@ -405,10 +405,10 @@ class MCP23017:
 
         """
         if self.invert_io:
-            if size is None:
-                size = self.bit_lenght
+            if max_v is None:
+                max_v = self.Consts.Register.max_value
 
-            if not (0 <= v <= size):
+            if not (0 <= v <= max_v):
                 raise ValueError(
                     f"bad bit '{hex(v)}', cant invert it "
                     + "you might want to check out all the code as its "
@@ -417,7 +417,7 @@ class MCP23017:
                     + "without noticing"
                 )
 
-            return invert(v, size)
+            return invert(v, max_v)
         return v
 
 

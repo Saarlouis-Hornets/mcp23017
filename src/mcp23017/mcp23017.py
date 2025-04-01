@@ -108,8 +108,6 @@ class MCP23017:
 
         self.check_written: bool = False
 
-        # self.bit_lenght: int = 255
-
     def set_mode(self, mode, gpio) -> None:
         # mask things
         register, rel_gpio = self.get_register_gpio_tuple(

@@ -1,68 +1,49 @@
-import time
+"""
+layer between the communication of an smbus and other code, thread safe
+"""
+
 import logging
+
+import threading
+
+from typing import Optional, TypeVar
+
+from .helper import GenericByteT, h
 
 
 class I2C:
-    def __init__(self, smbus, write_retries: int = 200,
-                 time_between_retries_ms: int = 0,
-                 invert_io: bool = False) -> None:
-        """
+    """
+    simple i2c class to handle communiction between
+    an smbus and other code
+    """
 
+    def __init__(self, smbus):
+        """
         :param smbus:
-        :param smbus_num:
-        :param time_between_retries_ms: how long to wait before retrying cause some bugs
-        :param write_retries: number of times to repeat the write if the result is wrong
         """
-        # make it not close on exit
-
-        # TODO: threading.Condition / LockedTracking
+        # make it not close on exit (edit: what did i mean?)
 
         self.lg = logging.getLogger(self.__class__.__name__)
+        self.lock = threading.Condition()
 
-        self.sbus = smbus
+        self.smbus = smbus
 
-        self.time_between_retries_ms = time_between_retries_ms
-        self.write_retries = write_retries
-        self.invert_io = invert_io
-        self.bit_lenght = 255
+    def write(self, address: GenericByteT, register: GenericByteT,
+              value: GenericByteT) -> None:
+        """
+        write to the smbus
 
-    def write(self, address: hex, register: hex, value: hex) -> None:
-        if self.invert_io:
-            value = self.invert(value)
+        """
+        with self.lock:
+            self.lg.hw_debug(f"wrinting at {h(address)}")
+            self.smbus.write_byte_data(address, register, value)
 
-        self.sbus.write_byte_data(address, register, value)
+    def read(self, address: GenericByteT,
+             register: Optional[GenericByteT] = None):
 
-        if not self.write_retries:
-            return
-
-        try_n = 0
-        good = False
-        for i in range(self.write_retries):
-            # HELP: what if inputs change???
-            # FIXME: mask, so we dont try to change any weird stuff there??
-            # TODO: put it in the board maybe??
-            if self.read(address=address, register=register) == value:
-                self.lg.hw_debug(f"needed {i} tries to write at {hex(address)} reg {hex(register)} {hex(value)} via bus {self.sbus}")
-                good = True
-                break
-            else:
-                if self.time_between_retries_ms:
-                    time.sleep(self.time_between_retries_ms/1000)
-                self.sbus.write_byte_data(address, register, value)
-            try_n = i
-        if not good:
-            raise IOError(f"tried {try_n} times, cant write {value} at {register}, maybe the board at {address} is broken")
-
-    def read(self, address, register=None):
-        r = self.sbus.read_byte_data(
+        r = self.smbus.read_byte_data(
             address, register
-        ) if register is not None else self.sbus.read_byte(address)
-        self.lg.hw_debug(f"reading from {hex(address)} at {hex(register)}: {r:08b}")
-        return self.invert(r) if self.invert_io else r
+        ) if register is not None else self.smbus.read_byte(address)
 
-
-    def invert(self, v):
-        if not (0 <= v <= self.bit_lenght):
-            raise ValueError("bad bit, its too long. Possible other wrong inversions too")
-
-        return ~v & self.bit_lenght
+        self.lg.hw_debug(f"read from {h(address)} at {h(register)}: {h(r)}")
+        return r

@@ -96,14 +96,16 @@ class EmulatedSMBus:
 
         :return:
         """
-        if (d_at_adr := adr in self._data) and reg in d_at_adr:
-            data = d_at_adr[reg]
+        # check if we have access to a value
+        if adr in self._data and reg in self._data[adr]:
+            data = self._data[adr][reg]
         # we have to make sure we return something
         else:
             data = 0
         self.logger.hw_debug(
             f"reading from adr {h(adr)} at reg {h(reg)}: {data}"
         )
+        return data
 
 
 class EmulatedSMBusMCP23017(EmulatedSMBus):

@@ -11,6 +11,15 @@ def h(v: GenericByteT) -> GenericByteT:
     """
     return hex(v)
 
+def bfp(val, size: int = 8) -> str:
+    """returns a formatted version for debgging
+
+    :param val: the value to format
+    :param size: the size of the returned string
+
+    :return: value as 2 bit word
+    """
+
 
 def compose_all_no_subclass(cls):
     """we get all elements that are NOT

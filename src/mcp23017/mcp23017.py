@@ -3,7 +3,7 @@ from typing import List, Optional, Any, Dict
 
 import time
 
-from .helper import compose_all_no_subclass, AllConsts
+from .helper import h, bfp, compose_all_no_subclass, AllConsts
 from .i2c import I2C, h, GenericByteT
 
 from . import logging_modes
@@ -21,12 +21,23 @@ class MCP23017:
         INPUT: int = 0xFF if bINPUT else 0x00
         OUTPUT: int = 0x00 if not bOUTPUT else 0xFF
 
-
         @compose_all_no_subclass
         class Register(AllConsts):
 
             bit_size: int = 8
-            max_value: int = int("1"*bit_size, 2)
+
+            class _max_value_class_property:
+                """some shenanigens to have a classmethod property
+                """
+                def __init__(self, f):
+                    self.func = f
+
+                def __get__(self, instance, owner):
+                    return self.func(owner)
+
+            @_max_value_class_property
+            def max_value(cls) -> int:
+                return int("1"*cls.bit_size, 2)
 
             class Index:
                 A: int = 0
@@ -45,17 +56,53 @@ class MCP23017:
             GPIO: tuple[int, int] = (0x12, 0x13)
             OLAT: tuple[int, int] = (0x14, 0x15)
 
-            def get_register(self, register, index: int):
-                return getattr(self, register)[index]
 
-            def get_index(self, register_tuple: tuple[int, int],
-                          register: int) -> int:
-                if register not in register_tuple:
-                    raise KeyError(f"{register=} not in {register_tuple=}")
-                return register_tuple.index(register)
+
+            @classmethod
+            def get_register(cls, register_name: str, index: int) -> int:
+                if not hasattr(cls, register_name):
+                    raise AttributeError(f"Register '{register_name}' does not exist.")
+
+                register_tuple = getattr(cls, register_name)
+
+                if not isinstance(register_tuple, tuple):
+                    raise TypeError(f"Register '{register_name}' is not a tuple.")
+
+                if index not in (0, 1):
+                    raise ValueError("Index must be 0 (A) or 1 (B).")
+
+                return register_tuple[index]
+
+            @staticmethod
+            def get_register_by_tuple(
+                    register_tuple: tuple[int, int],
+                    register_index: int
+            ) -> int:
+                return register_tuple[register_index]
+            
+            @staticmethod
+            def get_index(register_tuple: tuple[int, int], register: int) -> int:
+                try:
+                    return register_tuple.index(register)
+                except ValueError as exc:
+                    raise KeyError(f"{register=} not found in {register_tuple=}") from exc
+
+
+
+                #            @classmethod
+                #            def get_register(cls, register: str, index: int):
+                #                return getattr(cls, register)[index]
+                #
+                #           @classmethod
+                #          def get_index(
+                #                 cls, register_tuple: tuple[int, int],
+                #                register: int) -> int:
+                #           if register not in register_tuple:
+                #              raise KeyError(f"{register=} not in {register_tuple=}")
+                #         return register_tuple.index(register)
 
             Mask: Dict[str, Any] = {
-               "GPIO": IODIR
+                "GPIO": IODIR
             }
 
         @compose_all_no_subclass
@@ -192,13 +239,16 @@ class MCP23017:
                 # we obv have to check it again
                 good = False
 
-                # des = int(desired_value) if desired_value is not None else \
-                    # value
 
                 # get the desired value
-                if (des := int(desired_value)
-                    if desired_value is not None else value) \
-                   == self.read(check_register):
+                # also:
+                # we dont mask anything here, cause we dont have the contex
+                # that has to be done in upper functions
+                #
+                des = int(desired_value) if desired_value is not None else value
+                actual = self.read(check_register)
+                
+                if des == actual:
                     self.lg.hw_debug(
                         f"needed {number_of_tries} tries to write at "
                         + f"{h(self.address)} "
@@ -216,9 +266,11 @@ class MCP23017:
 
             if not good:
                 raise IOError(
-                    f"tried {number_of_tries} times, "
-                    + f"can't write  {h(value)} at {h(reg)}, "
-                    + f"maybe the board at {h(self.address)} is broken"
+                    f"tried {number_of_tries} times, " +
+                    f"can't write  {h(value)} at {h(reg)}, " +
+                    f"maybe the board at {h(self.address)} is broken" +
+                    f". {desired_value=}" +
+                    f"\n --- its atm: {h(self.read(reg))}, chck_reg: {h(check_register)}"
                 )
 
     def _mask_inputs(self, v: GenericByteT, io_reg: int) -> GenericByteT:
@@ -231,7 +283,7 @@ class MCP23017:
         :return: the masked value
         """
         # the register to pull to mask
-        mask_register = self.Consts.Register.get_register(
+        mask_register = self.Consts.Register.get_register_by_tuple(
             self.Consts.Register.Mask["GPIO"],
             self.Consts.Register.get_index(self.Consts.Register.GPIO, io_reg),
         )
@@ -243,7 +295,7 @@ class MCP23017:
 
         self.lg.hw_debug(f"the input mask is {h(mask)}")
 
-        masked_v = v & mask
+        masked_v = v & ~mask
 
         self.lg.hw_debug(f"the masked value is: {h(masked_v)}")
 
@@ -258,9 +310,10 @@ class MCP23017:
         register, rel_gpio = self.get_register_gpio_tuple(
             self.Consts.Register.GPIO, gpio
         )
-        to_write = self.set_bit_enabled(register, rel_gpio, state)
+        to_write = self.get_bit_enabled(register, rel_gpio, state)
         self.write(
             register, to_write,
+            # FIXME: am i using the right register for masking?
             desired_value=self._mask_inputs(
                 to_write, register,
             )
@@ -290,11 +343,14 @@ class MCP23017:
 
     def digital_write_all(self, state: bool):
         for reg in self.Consts.Register.GPIO:
+            to_write = self._invert_io(self.Consts.HIGH if state else self.Consts.LOW)
+
             self.write(
                 reg=reg,
-                value=self._invert_io(self.Consts.HIGH if state else self.Consts.LOW),
+                value=to_write,
+                # FIXME: read with Mask and
                 desired_value=self._mask_inputs(
-                    self.read(reg),
+                    to_write,
                     reg,
                 )
             )
@@ -317,11 +373,10 @@ class MCP23017:
             raise TypeError(
                 "pin must be one of GPAn or GPBn. See description for help")
 
-        register = registers[0] if gpio < 8 else registers[1]
-        _gpio = gpio % 8
-        return register, _gpio
+        bank = gpio // 8
+        return registers[bank], gpio % 8
 
-    def set_bit_enabled(self, reg, gpio, enable):
+    def get_bit_enabled(self, reg, gpio, enable) -> int:
         state_before = self.read(reg)
 
         return (state_before | self.bitmask(
@@ -400,7 +455,7 @@ class MCP23017:
         """
         invert based on bus lenght
 
-        make sure that the :size: is correct, as a wrong size might
+        make sure that the :max_v: is correct, as a wrong size might
         not be caught by checks
 
         """

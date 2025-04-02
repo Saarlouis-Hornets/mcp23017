@@ -1,11 +1,10 @@
 # mcp23017
+This library can be used to interact with extender boards of type MCP23017.
 
-> just an mcp lib
 
+### external source 
+used as a starting point to build thi enhanced version
 
-## 
-used to build an enhanced version for this project:
-
-[project home page](https://pypi.org/project/mcp23017/)
+project home page on pypi: [mcp23017](https://pypi.org/project/mcp23017/)
 
 under MIT license: https://opensource.org/licenses/MIT

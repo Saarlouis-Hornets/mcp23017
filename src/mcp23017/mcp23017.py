@@ -56,7 +56,25 @@ class MCP23017:
             GPIO: tuple[int, int] = (0x12, 0x13)
             OLAT: tuple[int, int] = (0x14, 0x15)
 
+            @classmethod
+            def get_register_and_index(cls, reg: int) -> tuple[str, int]:
+                for reg_from_t, (low, high) in cls.all_constants.items():
+                    if reg == low:
+                        return (reg_from_t, 0)
+                    elif reg == high:
+                        return (reg_from_t, 1)
+                raise ValueError(f"{h(reg)} is not a register in Consts")
 
+            @classmethod
+            def get_all_registers_and_index(cls, reg: int) -> list[tuple[str,int]]:
+                # FIXME
+                matches = []
+                for reg, (low, high) in REGISTERS.items():
+                    if index == low:
+                        matches.append((reg, 0))
+                    elif index == high:
+                        matches.append((reg, 1))
+                return matches
 
             @classmethod
             def get_register(cls, register_name: str, index: int) -> int:
@@ -73,13 +91,15 @@ class MCP23017:
 
                 return register_tuple[index]
 
+            # TODO: we need get a the key of a register
+            
             @staticmethod
             def get_register_by_tuple(
                     register_tuple: tuple[int, int],
                     register_index: int
             ) -> int:
                 return register_tuple[register_index]
-            
+
             @staticmethod
             def get_index(register_tuple: tuple[int, int], register: int) -> int:
                 try:
@@ -101,7 +121,7 @@ class MCP23017:
                 #              raise KeyError(f"{register=} not in {register_tuple=}")
                 #         return register_tuple.index(register)
 
-            Mask: Dict[str, Any] = {
+            Mask: Dict[str, tuple[int, int]] = {
                 "GPIO": IODIR
             }
 
@@ -157,26 +177,36 @@ class MCP23017:
 
         self.check_written: bool = False
 
-    def set_mode(self, mode, gpio) -> None:
-        # mask things
-        register, rel_gpio = self.get_register_gpio_tuple(
-            self.Consts.Register.IODIR, gpio
-        )
+    def set_gpio_mode(self, mode, gpio: Optional[int] = None) -> None:
+        if gpio is None:
+            for reg in self.Consts.Register.IODIR:
+                self.write(reg, mode)
+        else:
+            # mask things
+            register, rel_gpio = self.get_register_gpio_tuple(
+                self.Consts.Register.IODIR, gpio
+            )
 
-        self.set_bit_enabled(
-            register, rel_gpio, True if mode is self.Consts.INPUT else False
-        )
+            self.write(register, self.get_bit_enabled(
+                register, rel_gpio, True if mode is self.Consts.INPUT else False
+            ))
 
-    def set_mode_all(self, mode) -> None:
+    def set_gpio_mode_all(self, mode) -> None:
         for reg in self.Consts.Register.IODIR:
             self.write(reg, mode)
 
-    def get_mode(self, gpio) -> None:
-        # TODO: implement
-        raise NotImplementedError("use self.get_mode_all")
-        logging.warning("get_mode for boards not implemented yet")
+    def get_gpio_mode(self, gpio: int) -> int:
+        """
+        get set gpio modes
+        :param gpio:
 
-    def get_mode_all(self) -> List[int]:
+        :return: the gpio mode of gpio
+        """
+        # TODO: implement
+        logging.warning("get_mode for boards not implemented yet")
+        raise NotImplementedError("use self.get_mode_all")
+
+    def get_gpio_mode_all(self) -> List[int]:
         return [
             self.read(reg) for reg in self.Consts.Register.IODIR
         ]
@@ -185,8 +215,8 @@ class MCP23017:
         """
         read from register
 
-        keep in mind that unconfigured pin directions and pins configured as
-        input are also read there aswell as pins set as an output
+        keep in mind that reconfigured pin directions and pins configured as
+        input are also read there as well as pins set as an output
 
         :param register: read from there
 
@@ -196,29 +226,41 @@ class MCP23017:
 
     def write(self, reg, value,
               check_register: bool | int = True,
-              desired_value: Optional[int] = None):
+              desired_value: Optional[int] = None,
+              check_mask: Optional[int | bool] = None,
+              check_mask_register: Optional[int] = None,
+              ) -> None:
         """write the value to the register
 
-        if configured, we check if the write was sucessfull and retry for
+        if configured, we check if the write was successful and retry for
         self.write_retries times.  if still not good, return :IOError:
 
         :param reg: register to write to
-        :param value:
-        :param check_register: the register to check or True to check the same
-            register or False to not check at all (not recommenden)
-        :param desired_value: if check_register is True and this one is given,
-            we check for that instead of other stuff.  makes masking way easier
-
+        :param value: write that to :reg:
+        :param check_register: the register to check for :desired_value: if
+            True, check in :reg: if False skip checks
+        :param desired_value: if check_register is True we check for given value
+            to be in :check_register:, if not we check for :value:
+        :param check_mask: TODO mask the check_register with this before
+            comparing to desired_value (desired_value &~ actual)
+        :param check_mask_register: if :check_mask: is true, we read that
+            register and use the output as a mask
+        
+        
         :return:
         """
 
-        if reg not in self.Consts.Register.GPIO:
+        # TODO: invert option (if for example we need to mask the inputs not the outputs)
+        
+        if reg not in self.Consts.Register.all_elements_in_tuple:
             raise ValueError(
                 f"register {h(reg)} is not a valid register to write to"
             )
 
         if isinstance(check_register, bool):
             check_register = reg if check_register else False
+        if desired_value is None:
+            desired_value = value
 
         else:
             if check_register not in self.Consts.Register.GPIO:
@@ -244,11 +286,34 @@ class MCP23017:
                 # also:
                 # we dont mask anything here, cause we dont have the contex
                 # that has to be done in upper functions
-                #
-                des = int(desired_value) if desired_value is not None else value
-                actual = self.read(check_register)
+
+                # TODO: impl check_register
                 
-                if des == actual:
+                actual = self.read(check_register)
+
+                if check_mask is not None:
+                    if isinstance(check_mask, bool):
+                        if check_mask:
+                            if check_mask_register is None:
+                                raise ValueError(f"we need a mask location if {check_mask=} and no mask is provided")
+
+
+                            self.lg.hw_debug(f"getting mask from {h(check_mask_register)}")
+                            g_mask = self.read(check_mask_register)
+                            self.lg.hw_debug(f"applying mask {h(g_mask)} to {actual=}")
+                            actual = actual & ~g_mask
+                    
+                    else:    
+                        # we just apply it then
+                        self.lg.hw_debug(f"got actual value at {h(check_register)}. " +
+                                         f"applying mask {h(check_mask)}")
+                        actual = actual & ~check_mask
+                    self.lg.hw_debug(
+                        f"new actual after mask is: {h(actual)}"
+                    )
+
+
+                if (des := desired_value) == actual:
                     self.lg.hw_debug(
                         f"needed {number_of_tries} tries to write at "
                         + f"{h(self.address)} "
@@ -273,9 +338,40 @@ class MCP23017:
                     f"\n --- its atm: {h(self.read(reg))}, chck_reg: {h(check_register)}"
                 )
 
+    def get_mask_reg(self, reg: int) -> int:
+        """get the mask from the Consts corresponding with reg
+
+        :param reg: the register we need the mask for
+        :return: register to get the mask
+        """
+        register_name, register_index = self.Consts.Register.get_register_and_index(reg)
+
+        #mask = self.Consts.Register.get_register(
+        #    register_name=self.Consts.Register.Mask[register_name],
+        #    # FIXME: is that safe? think so
+        #    index=register_index
+        #)
+        mask = self.Consts.Register.Mask[register_name][register_index]
+
+        return mask
+
+    def _get_register_mask_for_io_register(self, io_reg: int) -> int:
+        """get the register needed for the masking
+
+        :param io_reg: the gpio register that we need the mask for
+        :return: register to pull the mask
+        """
+        return self.Consts.Register.get_register_by_tuple(
+            self.Consts.Register.Mask["GPIO"],
+            self.Consts.Register.get_index(self.Consts.Register.GPIO, io_reg)
+        )
+
     def _mask_inputs(self, v: GenericByteT, io_reg: int) -> GenericByteT:
         """
         mask out all the inputs cause we dont care about them
+
+        the pins defined as output will mask the value to 0 at that
+        place, no matter what the actual bit at that place is
 
         :param v: value to mask
         :param io_reg: io register, we get the IO modes here
@@ -283,25 +379,24 @@ class MCP23017:
         :return: the masked value
         """
         # the register to pull to mask
-        mask_register = self.Consts.Register.get_register_by_tuple(
-            self.Consts.Register.Mask["GPIO"],
-            self.Consts.Register.get_index(self.Consts.Register.GPIO, io_reg),
-        )
+        mask_register = self._get_register_mask_for_io_register(io_reg) 
         self.lg.hw_debug(f"using as mask register for write validation: {h(mask_register)}")
 
         # we dont need to find out what is input and what output as its dynamic const
         r = self.read(mask_register)
         mask = r if self.Consts.bINPUT else invert(r, self.Consts.Register.bit_size)
 
-        self.lg.hw_debug(f"the input mask is {h(mask)}")
+        self.lg.hw_debug("the input mask is: " +
+                         f"{bfp(mask, self.Consts.Register.bit_size)}")
 
         masked_v = v & ~mask
 
-        self.lg.hw_debug(f"the masked value is: {h(masked_v)}")
+        self.lg.hw_debug("the masked value is: " +
+                         f" {bfp(masked_v), self.Consts.Register.bit_size}")
 
         return masked_v
 
-    def digital_write(self, gpio, state: bool) -> None:
+    def gpio_digital_write(self, gpio, state: bool) -> None:
         """
         Sets the given GPIO to the given direction HIGH or LOW
         :param gpio: the GPIO to set the direction to
@@ -310,16 +405,20 @@ class MCP23017:
         register, rel_gpio = self.get_register_gpio_tuple(
             self.Consts.Register.GPIO, gpio
         )
-        to_write = self.get_bit_enabled(register, rel_gpio, state)
+        to_write = self._mask_inputs(
+            self.get_bit_enabled(register, rel_gpio, state),
+            register
+        )
         self.write(
             register, to_write,
             # FIXME: am i using the right register for masking?
-            desired_value=self._mask_inputs(
-                to_write, register,
-            )
+            desired_value=to_write,
+            check_register=True,
+            check_mask=True,
+            check_mask_register=self.get_mask_reg(register),
         )
 
-    def digital_read(self, gpio) -> bool:
+    def gpio_digital_read(self, gpio) -> bool:
         """
         Reads the current direction of the given GPIO
         :param gpio: the GPIO to read from
@@ -332,7 +431,7 @@ class MCP23017:
         # FIXME: im not consulting Consts.HIGH
         return bool(self._invert_io((bits & (1 << pair[1])) > 0, max_v=1))
 
-    def digital_read_all(self) -> List[int]:
+    def gpio_digital_read_all(self) -> List[int]:
         """
         :return: list of state for each io bus
         """
@@ -341,18 +440,16 @@ class MCP23017:
             for reg in self.Consts.Register.GPIO
         ]
 
-    def digital_write_all(self, state: bool):
+    def gpio_digital_write_all(self, state: bool):
         for reg in self.Consts.Register.GPIO:
             to_write = self._invert_io(self.Consts.HIGH if state else self.Consts.LOW)
 
             self.write(
                 reg=reg,
                 value=to_write,
-                # FIXME: read with Mask and
-                desired_value=self._mask_inputs(
-                    to_write,
-                    reg,
-                )
+                check_register=True,
+                check_mask=True,
+                check_mask_register=self.get_mask_reg(reg)
             )
 
     def get_register_gpio_tuple(self, registers, gpio) -> tuple:

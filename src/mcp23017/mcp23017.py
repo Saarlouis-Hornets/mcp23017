@@ -402,6 +402,9 @@ class MCP23017:
         :param gpio: the GPIO to set the direction to
         :param state: desired state
         """
+
+        state = self._invert_io(state, max_v=1)
+
         register, rel_gpio = self.get_register_gpio_tuple(
             self.Consts.Register.GPIO, gpio
         )

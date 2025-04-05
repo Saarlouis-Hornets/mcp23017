@@ -35,7 +35,7 @@ class I2C:
 
         """
         with self.lock:
-            self.lg.hw_debug(f"wrinting at {h(address)}")
+            self.lg.hw_debug(f"wrinting {h(value)} at {h(address)}")
             self.smbus.write_byte_data(address, register, value)
 
     def read(self, address: GenericByteT,

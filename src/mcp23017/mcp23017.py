@@ -92,7 +92,7 @@ class MCP23017:
                 return register_tuple[index]
 
             # TODO: we need get a the key of a register
-            
+
             @staticmethod
             def get_register_by_tuple(
                     register_tuple: tuple[int, int],
@@ -159,10 +159,13 @@ class MCP23017:
         address,
         uid: Optional[str] = None,
         invert_io: bool = False,
+        auto_low: bool = True,
         check_write: bool = True,
         write_retries: int = 200,
         time_between_retries_ms: int = 10,
     ) -> None:
+        """
+        """
         self.lg = logging.getLogger(f"{__name__}.{uid}@{hex(address)}")
 
         self.i2c = i2c
@@ -177,23 +180,36 @@ class MCP23017:
 
         self.check_written: bool = False
 
-    def set_gpio_mode(self, mode, gpio: Optional[int] = None) -> None:
-        if gpio is None:
-            for reg in self.Consts.Register.IODIR:
-                self.write(reg, mode)
-        else:
-            # mask things
-            register, rel_gpio = self.get_register_gpio_tuple(
-                self.Consts.Register.IODIR, gpio
-            )
+    def set_gpio_mode(self, mode, gpio: int,
+                      set_low: bool = True) -> None:
+        """Set a gpio mode of a pin.
 
-            self.write(register, self.get_bit_enabled(
-                register, rel_gpio, True if mode is self.Consts.INPUT else False
-            ))
+        :param mode:
+        :param gpio:
+        :param set_low: if mode is OUTPUT, set the gpio output to low.  Usefull
+            with inverted boards, so that its not on when set up
+        """
+        # mask things
+        register, rel_gpio = self.get_register_gpio_tuple(
+            self.Consts.Register.IODIR, gpio
+        )
 
-    def set_gpio_mode_all(self, mode) -> None:
+        self.write(register, self.get_bit_enabled(
+            register, rel_gpio, True if mode is self.Consts.INPUT else False
+        ))
+
+        if mode == self.Consts.OUTPUT and set_low:
+            self.gpio_digital_write(gpio, self.Consts.LOW)
+
+
+
+    def set_gpio_mode_all(self, mode,
+                          set_all_low: bool = True) -> None:
         for reg in self.Consts.Register.IODIR:
             self.write(reg, mode)
+
+        if mode == self.Consts.OUTPUT and set_all_low:
+            self.gpio_digital_write_all(self.Consts.LOW)
 
     def get_gpio_mode(self, gpio: int) -> int:
         """
@@ -245,13 +261,13 @@ class MCP23017:
             comparing to desired_value (desired_value &~ actual)
         :param check_mask_register: if :check_mask: is true, we read that
             register and use the output as a mask
-        
-        
+
+
         :return:
         """
 
         # TODO: invert option (if for example we need to mask the inputs not the outputs)
-        
+
         if reg not in self.Consts.Register.all_elements_in_tuple:
             raise ValueError(
                 f"register {h(reg)} is not a valid register to write to"
@@ -288,7 +304,7 @@ class MCP23017:
                 # that has to be done in upper functions
 
                 # TODO: impl check_register
-                
+
                 actual = self.read(check_register)
 
                 if check_mask is not None:
@@ -302,8 +318,8 @@ class MCP23017:
                             g_mask = self.read(check_mask_register)
                             self.lg.hw_debug(f"applying mask {h(g_mask)} to {actual=}")
                             actual = actual & ~g_mask
-                    
-                    else:    
+
+                    else:
                         # we just apply it then
                         self.lg.hw_debug(f"got actual value at {h(check_register)}. " +
                                          f"applying mask {h(check_mask)}")
@@ -379,7 +395,7 @@ class MCP23017:
         :return: the masked value
         """
         # the register to pull to mask
-        mask_register = self._get_register_mask_for_io_register(io_reg) 
+        mask_register = self._get_register_mask_for_io_register(io_reg)
         self.lg.hw_debug(f"using as mask register for write validation: {h(mask_register)}")
 
         # we dont need to find out what is input and what output as its dynamic const
